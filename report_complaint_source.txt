@@ -1,0 +1,232 @@
+
+import streamlit as st
+
+from modules.authentication import require_role, get_current_user
+from modules.complaint_manager import (
+    create_complaint,
+    COMPLAINT_CATEGORIES,
+    SEVERITY_LEVELS
+)
+from modules.image_handler import save_image
+
+
+# --------------------------------------------------
+# PAGE CONFIGURATION
+# --------------------------------------------------
+
+st.set_page_config(
+    page_title="Report a Complaint | CivicTrack",
+    page_icon="📝",
+    layout="wide"
+)
+
+
+# --------------------------------------------------
+# AUTHENTICATION
+# --------------------------------------------------
+
+require_role("citizen")
+
+user = get_current_user()
+
+
+# --------------------------------------------------
+# PAGE HEADER
+# --------------------------------------------------
+
+st.title("📝 Report a Civic Issue")
+
+st.write(
+    "Help improve your community by reporting a public "
+    "infrastructure or civic problem."
+)
+
+st.info(
+    "Please provide accurate information so that the "
+    "responsible department can review your complaint."
+)
+
+
+# --------------------------------------------------
+# COMPLAINT FORM
+# --------------------------------------------------
+
+with st.form("complaint_submission_form", clear_on_submit=True):
+
+    st.subheader("Complaint Information")
+
+    title = st.text_input(
+        "Complaint Title",
+        placeholder="Example: Large pothole near main road",
+        max_chars=120
+    )
+
+    category = st.selectbox(
+        "Complaint Category",
+        COMPLAINT_CATEGORIES
+    )
+
+    severity = st.select_slider(
+        "Complaint Severity",
+        options=SEVERITY_LEVELS,
+        value="Medium"
+    )
+
+    description = st.text_area(
+        "Detailed Description",
+        placeholder=(
+            "Describe the problem, its location and "
+            "how it affects the public."
+        ),
+        height=150,
+        max_chars=3000
+    )
+
+    st.subheader("Location Details")
+
+    address = st.text_area(
+        "Full Address / Location",
+        placeholder=(
+            "Enter the street, locality, city and "
+            "other useful location details."
+        ),
+        height=90,
+        max_chars=500
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        latitude_input = st.text_input(
+            "Latitude (Optional)",
+            placeholder="Example: 22.5726"
+        )
+
+    with col2:
+        longitude_input = st.text_input(
+            "Longitude (Optional)",
+            placeholder="Example: 88.3639"
+        )
+
+    st.subheader("Supporting Photograph")
+
+    uploaded_image = st.file_uploader(
+        "Upload a photograph of the issue",
+        type=["jpg", "jpeg", "png", "webp"],
+        help="Maximum file size: 5 MB."
+    )
+
+    agree = st.checkbox(
+        "I confirm that the information provided is accurate."
+    )
+
+    submitted = st.form_submit_button(
+        "Submit Complaint",
+        use_container_width=True
+    )
+
+
+# --------------------------------------------------
+# FORM PROCESSING
+# --------------------------------------------------
+
+if submitted:
+
+    if not title.strip():
+        st.error("Please enter a complaint title.")
+
+    elif not description.strip():
+        st.error("Please provide a complaint description.")
+
+    elif not address.strip():
+        st.error("Please provide the complaint location.")
+
+    elif not agree:
+        st.error("Please confirm the information before submitting.")
+
+    else:
+
+        latitude = None
+        longitude = None
+
+        try:
+
+            if latitude_input.strip():
+                latitude = float(latitude_input.strip())
+
+            if longitude_input.strip():
+                longitude = float(longitude_input.strip())
+
+            if (latitude is None) != (longitude is None):
+                raise ValueError(
+                    "Please provide both latitude and longitude."
+                )
+
+            if latitude is not None:
+                if not -90 <= latitude <= 90:
+                    raise ValueError("Latitude must be between -90 and 90.")
+
+                if not -180 <= longitude <= 180:
+                    raise ValueError("Longitude must be between -180 and 180.")
+
+        except ValueError as error:
+            st.error(str(error))
+            st.stop()
+
+        image_path = None
+
+        if uploaded_image is not None:
+
+            image_path, image_message = save_image(uploaded_image)
+
+            if image_path is None:
+                st.error(image_message)
+                st.stop()
+
+        success, result = create_complaint(
+            citizen_id=user["id"],
+            title=title,
+            category=category,
+            description=description,
+            address=address,
+            severity=severity,
+            latitude=latitude,
+            longitude=longitude,
+            image_path=image_path
+        )
+
+        if success:
+
+            st.success("Your complaint has been submitted successfully!")
+
+            st.markdown("### Your Complaint Tracking ID")
+
+            st.code(result)
+
+            st.info(
+                "Save this tracking ID. You can use it to "
+                "identify and follow your complaint."
+            )
+
+        else:
+
+            # Remove an uploaded image if complaint creation failed.
+            if image_path:
+
+                from modules.image_handler import delete_image
+
+                delete_image(image_path)
+
+            st.error(result)
+
+
+# --------------------------------------------------
+# FOOTER
+# --------------------------------------------------
+
+st.divider()
+
+st.caption(
+    "CivicTrack | Complaint Reporting Portal"
+)
+
